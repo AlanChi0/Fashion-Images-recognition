@@ -1,0 +1,990 @@
+---
+title: "APANPS5335 Final Project, Summer 2018"
+author: "Quanlei Chi qc246"
+date: "2018-08-10"
+output:
+  prettydoc::html_pretty:
+  theme: cayman
+highlight: github
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55))
+```
+
+```{r libraries}
+#Libraries
+library(DT)
+library(data.table)
+library(caretEnsemble)
+library(caret)
+library(rpart)
+library(randomForest)
+library(keras)
+library(e1071)
+```
+
+```{r source_files}
+
+```
+
+```{r functions}
+# Functions
+Convert.Protolabel=function(pred){
+  pred=data.frame(pred)
+  label=c("Ankle boot","Bag","Coat","Dress","Pullover","Sandal","Shirt","Sneaker","T-shirt/top",
+          "Trouser")
+  pred.new=list()
+  for(i in 1:nrow(pred)){
+    pred.new=append(pred.new,label[which.max(pred[i,])])
+  }
+  return(unlist(data.table(pred.new)))
+}
+```
+
+```{r constants}
+#Constants
+A1=0.05
+A2=0.1
+A3=0.15
+```
+
+```{r load_data}
+
+```
+
+```{r clean_data}
+
+```
+
+## Introduction
+
+The project will focus on an image recognition problem.  In this report, I will construct a variety of machine learning models to generate predictive classifications. Those machine learning models including:
+
++ **Ensemble model:('svm', 'knn','rf','cnn','sequential')**
++ **Convolutional Neural Network**
++ **Simple Sequential model(keras)**
++ **Neural Networks**
++ **K-Nearest Neighbors**
++ **Multinomial logistic regression**
++ **Classification Tree**
++ **Random Forest**
++ **Support Vector Machines**
++ **Generalized Boosted Regression Models**
+
+## The Data
+
+The MNIST Fashion database (https://github.com/zalandoresearch/fashion-mnist) collected a large number of images for different types of apparel.  Each image is divided into small squares called **pixels** of equal area.  Within each pixel, a grayscale brightness measurement was recorded.  The brightness values range from 0 (white) to 255 (black).  The original data set divided each image into 784 (28 by 28) pixels.  To facilitate easier computation, the data has been condensed into 49 pixels (7 by 7) per image.  The first 7 pixels represent the top row, the next 7 pixels form the second row, etc.
+
+## The Score
+
+What are the best machine learning models for classifying the labels of the testing set based upon the data of the training set?  How small of a sample size do you need to generate the "best" predictions?  To balance these competing goals, we will introduce an overall scoring function:
+
+**Points = 0.5 * A + (1 - B)**
+
+where
+
+**A** is the proportion of the training rows that is utilized in the model. 
+
+**B** is the testing accuracy.
+
+I will create and evaluate different machine learning models on different sample sizes.  Different combinations of models and sample sizes can be compared based on their Points.  The overall goal is to build a classification method that **minimizes the value** of **Points**.
+
+### Data preparation
+
+The first step of machine learning is always about the data cleansing. In the following code,I split the training set into 3 different size subsets, which contain 10%,30% and 100% data of training set.
+
+I select the 5%,10% and 15% as three subsets because it really a lot models to run and need more time to compute if I select the train subsets bigger.
+
+If the weight of the formula **Points = 0.5 * A + (1 - B)** changed, like gave more weight to the sample size component A, I will have to select smaller sample size like 0.01 to get lower Points. And if we gave more weight to the accuracy B, I will need to select larger sample size to train the model to ensure higher accuracy so that I could get lower Points.
+
+```{r Data_preparation}
+set.seed(0)
+train = fread(input = "MNIST-fashion training set-49.csv", verbose = FALSE)
+train$label=as.factor(train$label)
+train.subset1.1=train[sample(nrow(train),size=nrow(train)*A1),]
+train.subset1.2=train[sample(nrow(train),size=nrow(train)*A1),]
+train.subset1.3=train[sample(nrow(train),size=nrow(train)*A1),]
+train.subset2.1=train[sample(nrow(train),size=nrow(train)*A2),]
+train.subset2.2=train[sample(nrow(train),size=nrow(train)*A2),]
+train.subset2.3=train[sample(nrow(train),size=nrow(train)*A2),]
+train.subset3.1=train[sample(nrow(train),size=nrow(train)*A3),]
+train.subset3.2=train[sample(nrow(train),size=nrow(train)*A3),]
+train.subset3.3=train[sample(nrow(train),size=nrow(train)*A3),]
+test=fread(input = "MNIST-fashion testing set-49.csv", verbose = FALSE)
+test$label=as.factor(test$label)
+# summary(train)
+# summary(test)
+table(train$label)
+table(test$label)
+```
+I did summary the data by using **summary()** function,but I don't want it show in report because it takes a lot space to show not very useful contents. 
+
+From the summary of training and testing set. We could know that there is no missing data. So no need for NA imputation in this project.
+
+From the labels' table we could know that there are 10 different labels in training and testing set. And I used **as.factor()** convert the dependent variable into factors.
+
+### Model 1: K-Nearest Neighbors
+
+In the classification setting, the K-nearest neighbor algorithm essentially boils down to forming a majority vote between the K most similar points. And the similarity is defined according to a distance metric between two data points.
+
+KNN is a pretty famous technique to do classification, so I select it to see how it performed. 
+
+The advantages of KNN are that it simple to understand and easy to implement. With zero to little training time, it can be a useful tool for off-the-bat analysis of some data set you are planning to run more complex algorithms on. Furthermore, KNN works just as easily with multiclass data sets whereas other algorithms are hardcoded for the binary setting. 
+
+The disadvantages of KNN are: First,the KNN algorithm is the computationally expensive testing phase which is impractical in industry settings. Note the rigid dichotomy between KNN and the more sophisticated Neural Network which has a lengthy training phase albeit a very fast testing phase. Furthermore, KNN can suffer from skewed class distributions. For example, if a certain class is very frequent in the training set, it will tend to dominate the majority voting of the new example. Finally, the accuracy of KNN can be severely degraded with high-dimension data because there is little difference between the nearest and farthest neighbor.
+
+```{r code_model1}
+library(class)
+#--------------------------------------------------------------------------------------------------
+##### Select the best K#####
+df.knn=numeric()
+B.knn=numeric()
+for(i in 1:20){
+  model.knn=knn(train=train.subset1.1[,-1] ,test=test[,-1],cl=train.subset1.1$label,k=i)
+  B.knn=mean(model.knn==test$label)
+  df.knn=rbind(df.knn,c(i,B.knn))
+}
+plot(df.knn,xlab = 'K',ylab = 'Accuracy',main = 'Select_best_K')
+
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time1.1=Sys.time()
+model1.1.1=knn(train=train.subset1.1[,-1] ,
+             test=test[,-1],cl=train.subset1.1$label,k=which.max(df.knn[,2]))
+model1.1.2=knn(train=train.subset1.2[,-1] ,
+             test=test[,-1],cl=train.subset1.2$label,k=which.max(df.knn[,2]))
+model1.1.3=knn(train=train.subset1.3[,-1] ,
+             test=test[,-1],cl=train.subset1.3$label,k=which.max(df.knn[,2]))
+time1.1=Sys.time()-time1.1
+time1.2=Sys.time()
+model1.2.1=knn(train=train.subset2.1[,-1] ,
+             test=test[,-1],cl=train.subset2.1$label,k=which.max(df.knn[,2]))
+model1.2.2=knn(train=train.subset2.2[,-1] ,
+             test=test[,-1],cl=train.subset2.2$label,k=which.max(df.knn[,2]))
+model1.2.3=knn(train=train.subset2.3[,-1] ,
+             test=test[,-1],cl=train.subset2.3$label,k=which.max(df.knn[,2]))
+time1.2=Sys.time()-time1.2
+time1.3=Sys.time()
+model1.3.1=knn(train=train.subset3.1[,-1] ,
+             test=test[,-1],cl=train.subset3.1$label,k=which.max(df.knn[,2]))
+model1.3.2=knn(train=train.subset3.2[,-1] ,
+             test=test[,-1],cl=train.subset3.2$label,k=which.max(df.knn[,2]))
+model1.3.3=knn(train=train.subset3.3[,-1] ,
+             test=test[,-1],cl=train.subset3.3$label,k=which.max(df.knn[,2]))
+time1.3=Sys.time()-time1.3
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+B1.1=round((mean(model1.1.1==test$label)+mean(model1.1.2==test$label)+mean(model1.1.3==test$label))/3,4)
+B1.2=round((mean(model1.2.1==test$label)+mean(model1.2.2==test$label)+mean(model1.2.3==test$label))/3,4)
+B1.3=round((mean(model1.3.1==test$label)+mean(model1.3.2==test$label)+mean(model1.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row1=numeric()
+row1.1=c("K_Nearest_Neighbors",nrow(train)*A1,A1,B1.1,0.5*A1+(1-B1.1),round(time1.1,4))
+row1.2=c("K_Nearest_Neighbors",nrow(train)*A2,A2,B1.2,0.5*A2+(1-B1.2),round(time1.2,4))
+row1.3=c("K_Nearest_Neighbors",nrow(train)*A3,A3,B1.3,0.5*A3+(1-B1.3),round(time1.3,4))
+row1=rbind(row1.1,row1.2,row1.3)
+colnames(row1)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row1)
+```
+From the graph of "Select_best_K" we could know that K= `r which.max(df.knn[,2])` is the best choice of K.
+
+From the datatable,we could know that knn performed pretty well in this data set and just spend few seconds to compute.
+
+### Model 2:  Multinomial logistic regression
+
+In statistics, multinomial logistic regression is a classification method that generalizes logistic regression to multiclass problems.
+
+Multinom is a very basic technique, so I select it to see how it performed. 
+
+The advantages of Multinom are that it simple to understand and easy to implement. It based on linear assumption so people could the **Coefficients** that how each variables affect the dependent variable. 
+
+The disadvantages is the multinomial logit relies on the assumption of independence of irrelevant alternatives (IIA), which is not always desirable. This assumption states that the odds of preferring one class over another do not depend on the presence or absence of other "irrelevant" alternatives. For example, the relative probabilities of taking a car or bus to work do not change if a bicycle is added as an additional possibility. Meanwhile,the model is too simple to get high accuracy.
+
+```{r code_model2}
+library(nnet)
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time2.1=Sys.time()
+model2.1.1=multinom(label~.,data= train.subset1.1)
+model2.1.2=multinom(label~.,data= train.subset1.2)
+model2.1.3=multinom(label~.,data= train.subset1.3)
+time2.1=Sys.time()-time2.1
+time2.2=Sys.time()
+model2.2.1=multinom(label~.,data= train.subset2.1)
+model2.2.2=multinom(label~.,data= train.subset2.2)
+model2.2.3=multinom(label~.,data= train.subset2.3)
+time2.2=Sys.time()-time2.2
+time2.3=Sys.time()
+model2.3.1=multinom(label~.,data= train.subset3.1)
+model2.3.2=multinom(label~.,data= train.subset3.2)
+model2.3.3=multinom(label~.,data= train.subset3.3)
+time2.3=Sys.time()-time2.3
+# summary(model2.1)
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred2.1.1=predict(model2.1.1,newdata= test)
+pred2.1.2=predict(model2.1.2,newdata= test)
+pred2.1.3=predict(model2.1.3,newdata= test)
+pred2.2.1=predict(model2.2.1,newdata= test)
+pred2.2.2=predict(model2.2.2,newdata= test)
+pred2.2.3=predict(model2.2.3,newdata= test)
+pred2.3.1=predict(model2.3.1,newdata= test)
+pred2.3.2=predict(model2.3.2,newdata= test)
+pred2.3.3=predict(model2.3.3,newdata= test)
+B2.1=round((mean(pred2.1.1==test$label)+mean(pred2.1.2==test$label)+mean(pred2.1.3==test$label))/3,4)
+B2.2=round((mean(pred2.2.1==test$label)+mean(pred2.2.2==test$label)+mean(pred2.2.3==test$label))/3,4)
+B2.3=round((mean(pred2.3.1==test$label)+mean(pred2.3.2==test$label)+mean(pred2.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row2=numeric()
+row2.1=c("Multinomial_logistic_regression",nrow(train)*A1,A1,B2.1,0.5*A1+(1-B2.1),round(time2.1,4))
+row2.2=c("Multinomial_logistic_regression",nrow(train)*A2,A2,B2.2,0.5*A2+(1-B2.2),round(time2.2,4))
+row2.3=c("Multinomial_logistic_regression",nrow(train)*A3,A3,B2.3,0.5*A3+(1-B2.3),round(time2.3,4))
+row2=rbind(row2.1,row2.2,row2.3)
+colnames(row2)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row2)
+```
+I did the summary of the Multinomial logistic regression model but I don't want it shown in report, because the summary take too much space.
+
+As expect, for the datatable we could know that Multinomial logistic regression didn't get very good performance in this data set, because the pixels of a image effect each other.
+
+
+### Model 3:  Classification Tree
+
+Decision tree builds classification or regression models in the form of a tree structure. It breaks down a dataset into smaller and smaller subsets by making each of its subsets have lowest entropy.
+
+Classification Tree is a very basic technique, so I select it to see how it performed. 
+
+The advantages of Classification Tree are that it easy to interpret visually how the model works.Secondly, it can easily handle qualitative (categorical) features and works well with decision boundaries parellel to the feature axis
+
+The disadvantages is it is a greedy algorithm and prone to overfitting. Furthermore, the tree model is not very robust, which means by adding some more data, the whole model could completely changed. 
+
+```{r code_model3}
+library(rpart)
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time3.1=Sys.time()
+model3.1.1=rpart(label~.,data= train.subset1.1,cp=0)
+model3.1.2=rpart(label~.,data= train.subset1.2,cp=0)
+model3.1.3=rpart(label~.,data= train.subset1.3,cp=0)
+time3.1=Sys.time()-time3.1
+time3.2=Sys.time()
+model3.2.1=rpart(label~.,data= train.subset2.1,cp=0)
+model3.2.2=rpart(label~.,data= train.subset2.2,cp=0)
+model3.2.3=rpart(label~.,data= train.subset2.3,cp=0)
+time3.2=Sys.time()-time3.2
+time3.3=Sys.time()
+model3.3.1=rpart(label~.,data= train.subset3.1,cp=0)
+model3.3.2=rpart(label~.,data= train.subset3.2,cp=0)
+model3.3.3=rpart(label~.,data= train.subset3.3,cp=0)
+time3.3=Sys.time()-time3.3
+plot(model3.3.3)
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred3.1.1=predict(model3.1.1,newdata= test,type='class')
+pred3.1.2=predict(model3.1.2,newdata= test,type='class')
+pred3.1.3=predict(model3.1.3,newdata= test,type='class')
+pred3.2.1=predict(model3.2.1,newdata= test,type='class')
+pred3.2.2=predict(model3.2.2,newdata= test,type='class')
+pred3.2.3=predict(model3.2.3,newdata= test,type='class')
+pred3.3.1=predict(model3.3.1,newdata= test,type='class')
+pred3.3.2=predict(model3.3.2,newdata= test,type='class')
+pred3.3.3=predict(model3.3.3,newdata= test,type='class')
+B3.1=round((mean(pred3.1.1==test$label)+mean(pred3.1.2==test$label)+mean(pred3.1.3==test$label))/3,4)
+B3.2=round((mean(pred3.2.1==test$label)+mean(pred3.2.2==test$label)+mean(pred3.2.3==test$label))/3,4)
+B3.3=round((mean(pred3.3.1==test$label)+mean(pred3.3.2==test$label)+mean(pred3.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row3=numeric()
+row3.1=c("Classification_Tree",nrow(train)*A1,A1,B3.1,0.5*A1+(1-B3.1),round(time3.1,4))
+row3.2=c("Classification_Tree",nrow(train)*A2,A2,B3.2,0.5*A2+(1-B3.2),round(time3.2,4))
+row3.3=c("Classification_Tree",nrow(train)*A3,A3,B3.3,0.5*A3+(1-B3.3),round(time3.3,4))
+row3=rbind(row3.1,row3.2,row3.3)
+colnames(row3)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row3)
+```
+I test the cp parameter several times and found when cp equal to 0, which means no prun the tree at all, the tree model get the best accuracy. I think it because the training data and testing data are very similar to each other.
+
+However, the tree model didn't have a very good performance in this data set.I think it because tree models are not very good at multiclassification compare to algorithm like neural network.
+
+### Model 4: Random Forest
+
+Random Forest randomly select rows and variables to build hundreds of trees and ensemble them together.
+
+Random Forest is a very popular technique, and always have good performance. so I select it as one base line accuracy I should reach. 
+
+The advantages of Random Forest are that it is a ensemble models already which have lower variance and pretty high accuracy in most cases.
+
+The disadvantages is it hard to visualized, and it works with some random method which couldn't be explained to the business world. 
+
+```{r code_model4}
+library(randomForest)
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time4.1=Sys.time()
+model4.1.1=randomForest(as.factor(label)~.,data= train.subset1.1,ntree=200)
+model4.1.2=randomForest(as.factor(label)~.,data= train.subset1.2,ntree=200)
+model4.1.3=randomForest(as.factor(label)~.,data= train.subset1.3,ntree=200)
+time4.1=Sys.time()-time4.1
+time4.2=Sys.time()
+model4.2.1=randomForest(as.factor(label)~.,data= train.subset2.1,ntree=200)
+model4.2.2=randomForest(as.factor(label)~.,data= train.subset2.2,ntree=200)
+model4.2.3=randomForest(as.factor(label)~.,data= train.subset2.3,ntree=200)
+time4.2=Sys.time()-time4.2
+time4.3=Sys.time()
+model4.3.1=randomForest(as.factor(label)~.,data= train.subset3.1,ntree=200)
+model4.3.2=randomForest(as.factor(label)~.,data= train.subset3.2,ntree=200)
+model4.3.3=randomForest(as.factor(label)~.,data= train.subset3.3,ntree=200)
+time4.3=Sys.time()-time4.3
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred4.1.1=predict(model4.1.1,newdata= test,type='class')
+pred4.1.2=predict(model4.1.2,newdata= test,type='class')
+pred4.1.3=predict(model4.1.3,newdata= test,type='class')
+pred4.2.1=predict(model4.2.1,newdata= test,type='class')
+pred4.2.2=predict(model4.2.2,newdata= test,type='class')
+pred4.2.3=predict(model4.2.3,newdata= test,type='class')
+pred4.3.1=predict(model4.3.1,newdata= test,type='class')
+pred4.3.2=predict(model4.3.2,newdata= test,type='class')
+pred4.3.3=predict(model4.3.3,newdata= test,type='class')
+B4.1=round((mean(pred4.1.1==test$label)+mean(pred4.1.2==test$label)+mean(pred4.1.3==test$label))/3,4)
+B4.2=round((mean(pred4.2.1==test$label)+mean(pred4.2.2==test$label)+mean(pred4.2.3==test$label))/3,4)
+B4.3=round((mean(pred4.3.1==test$label)+mean(pred4.3.2==test$label)+mean(pred4.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row4=numeric()
+row4.1=c("Random_Forest",nrow(train)*A1,A1,B4.1,0.5*A1+(1-B4.1),round(time4.1,4))
+row4.2=c("Random_Forest",nrow(train)*A2,A2,B4.2,0.5*A2+(1-B4.2),round(time4.2,4))
+row4.3=c("Random_Forest",nrow(train)*A3,A3,B4.3,0.5*A3+(1-B4.3),round(time4.3,4))
+row4=rbind(row4.1,row4.2,row4.3)
+colnames(row4)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row4)
+```
+I select ntree=200 because normally, more trees won't help a lot when it over 100.
+
+From the datatable, we could know that random forest performance very well and I get the highest accuracy from now. I think it because random forest is a ensemble model itself.
+
+
+### Model 5: Support Vector Machines 
+
+SVM works by mapping data to a high-dimensional feature space so that data points can be categorized, even when the data are not otherwise linearly separable. A separator between the categories is found, then the data are transformed in such a way that the separator could be drawn as a hyperplane. Following this, characteristics of new data can be used to predict the group to which a new record should belong.
+
+Support Vector Machines is one of the most popular techniques, and almost have the best performance before neural network came out. so I select it to see how it performed. 
+
+The advantages of Support Vector Machines are: First, it is pretty robust model because the separator only affected by support vector. Second, it could sovle no linear distribution data because it maps data into higher dimensions. Finally, due to some mathematical tricks,the svm could calculate high dimensional data in low dimensions,which reduce a lot compute time.
+
+The disadvantages is it still take a long time to train the model.
+
+
+```{r code_model5}
+library(e1071)
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time5.1=Sys.time()
+model5.1.1=svm(as.factor(label)~.,data= train.subset1.1, tolerance = 0.001)
+model5.1.2=svm(as.factor(label)~.,data= train.subset1.2, tolerance = 0.001)
+model5.1.3=svm(as.factor(label)~.,data= train.subset1.3, tolerance = 0.001)
+time5.1=Sys.time()-time5.1
+time5.2=Sys.time()
+model5.2.1=svm(as.factor(label)~.,data= train.subset2.1, tolerance = 0.001)
+model5.2.2=svm(as.factor(label)~.,data= train.subset2.2, tolerance = 0.001)
+model5.2.3=svm(as.factor(label)~.,data= train.subset2.3, tolerance = 0.001)
+time5.2=Sys.time()-time5.2
+time5.3=Sys.time()
+model5.3.1=svm(as.factor(label)~.,data= train.subset3.1, tolerance = 0.001)
+model5.3.2=svm(as.factor(label)~.,data= train.subset3.2, tolerance = 0.001)
+model5.3.3=svm(as.factor(label)~.,data= train.subset3.3, tolerance = 0.001)
+time5.3=Sys.time()-time5.3
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred5.1.1=predict(model5.1.1,newdata= test,type='class')
+pred5.1.2=predict(model5.1.2,newdata= test,type='class')
+pred5.1.3=predict(model5.1.3,newdata= test,type='class')
+pred5.2.1=predict(model5.2.1,newdata= test,type='class')
+pred5.2.2=predict(model5.2.2,newdata= test,type='class')
+pred5.2.3=predict(model5.2.3,newdata= test,type='class')
+pred5.3.1=predict(model5.3.1,newdata= test,type='class')
+pred5.3.2=predict(model5.3.2,newdata= test,type='class')
+pred5.3.3=predict(model5.3.3,newdata= test,type='class')
+B5.1=round((mean(pred5.1.1==test$label)+mean(pred5.1.2==test$label)+mean(pred5.1.3==test$label))/3,4)
+B5.2=round((mean(pred5.2.1==test$label)+mean(pred5.2.2==test$label)+mean(pred5.2.3==test$label))/3,4)
+B5.3=round((mean(pred5.3.1==test$label)+mean(pred5.3.2==test$label)+mean(pred5.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row5=numeric()
+row5.1=c("Support_Vector_Machines",nrow(train)*A1,A1,B5.1,0.5*A1+(1-B5.1),round(time5.1,4))
+row5.2=c("Support_Vector_Machines",nrow(train)*A2,A2,B5.2,0.5*A2+(1-B5.2),round(time5.2,4))
+row5.3=c("Support_Vector_Machines",nrow(train)*A3,A3,B5.3,0.5*A3+(1-B5.3),round(time5.3,4))
+row5=rbind(row5.1,row5.2,row5.3)
+colnames(row5)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row5)
+```
+I chose different tolerance and found out when the tolerance equal to 0.001 the model have best performance. I didn't tune the models by using cross validation because it really take too much time to compute .
+
+As expect, from the datatable we could know that the Support Vector Machines have second performance from now which only after random forest.
+
+
+### Model 6: Generalized Boosted Regression Models
+
+Generalized Boosted Regression Models is also one kind of ensemble models. It trys to build a big model first and build several smaller models the replace the week parts of the big model, which we called boosting.So the total model have lower loss and higher accuracy. 
+
+GBM is also a well-known technique. so I select it to see how it performed. 
+
+The advantages of GBM is it is one kind of ensemble models so likely have pretty well performance in most cases.
+
+The disadvantages is it take a long time to train the model and is a greedy algorithm as well, which means it might end in local maximum easily.
+
++ Because the predict.gbm only have type='response', which means predict.gbm only return the probility of each labels rather than exact label names. I need to wirte my own function **Convert.Protolabel** to calculate the accuracy.
+```{r code_model6}
+library(gbm)
+#--------------------------------------------------------------------------------------------------
+##### Run the models in different size of training set#####
+set.seed(0)
+time6.1=Sys.time()
+model6.1.1=gbm(as.factor(label)~.,data= train.subset1.1,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.1.2=gbm(as.factor(label)~.,data= train.subset1.2,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.1.3=gbm(as.factor(label)~.,data= train.subset1.3,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+time6.1=Sys.time()-time6.1
+time6.2=Sys.time()
+model6.2.1=gbm(as.factor(label)~.,data= train.subset2.1,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.2.2=gbm(as.factor(label)~.,data= train.subset2.2,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.2.3=gbm(as.factor(label)~.,data= train.subset2.3,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+time6.2=Sys.time()-time6.2
+time6.3=Sys.time()
+model6.3.1=gbm(as.factor(label)~.,data= train.subset3.1,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.3.2=gbm(as.factor(label)~.,data= train.subset3.2,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+model6.3.3=gbm(as.factor(label)~.,data= train.subset3.3,
+             distribution = "multinomial",n.trees = 200,
+             cv.folds=5)
+time6.3=Sys.time()-time6.3
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred6.1.1=predict(model6.1.1,newdata= test,type='response',n.trees = 200)
+pred6.1.1=Convert.Protolabel(pred6.1.1)
+pred6.1.2=predict(model6.1.2,newdata= test,type='response',n.trees = 200)
+pred6.1.2=Convert.Protolabel(pred6.1.2)
+pred6.1.3=predict(model6.1.3,newdata= test,type='response',n.trees = 200)
+pred6.1.3=Convert.Protolabel(pred6.1.3)
+pred6.2.1=predict(model6.2.1,newdata= test,type='response',n.trees = 200)
+pred6.2.1=Convert.Protolabel(pred6.2.1)
+pred6.2.2=predict(model6.2.2,newdata= test,type='response',n.trees = 200)
+pred6.2.2=Convert.Protolabel(pred6.2.2)
+pred6.2.3=predict(model6.2.3,newdata= test,type='response',n.trees = 200)
+pred6.2.3=Convert.Protolabel(pred6.2.3)
+pred6.3.1=predict(model6.3.1,newdata= test,type='response',n.trees = 200)
+pred6.3.1=Convert.Protolabel(pred6.3.1)
+pred6.3.2=predict(model6.3.2,newdata= test,type='response',n.trees = 200)
+pred6.3.2=Convert.Protolabel(pred6.3.2)
+pred6.3.3=predict(model6.3.3,newdata= test,type='response',n.trees = 200)
+pred6.3.3=Convert.Protolabel(pred6.3.3)
+B6.1=round((mean(pred6.1.1==test$label)+mean(pred6.1.2==test$label)+mean(pred6.1.3==test$label))/3,4)
+B6.2=round((mean(pred6.2.1==test$label)+mean(pred6.2.2==test$label)+mean(pred6.2.3==test$label))/3,4)
+B6.3=round((mean(pred6.3.1==test$label)+mean(pred6.3.2==test$label)+mean(pred6.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row6.1=c("Support_Vector_Machines",nrow(train)*A1,A1,B6.1,0.5*A1+(1-B6.1),round(time6.1,4))
+row6.2=c("Support_Vector_Machines",nrow(train)*A2,A2,B6.2,0.5*A2+(1-B6.2),round(time6.2,4))
+row6.3=c("Support_Vector_Machines",nrow(train)*A3,A3,B6.3,0.5*A3+(1-B6.3),round(time6.3,4))
+row6=numeric()
+row6=rbind(row6.1,row6.2,row6.3)
+colnames(row6)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row6)
+```
+Surprisingly,though I used 5 fold cross validation when training the model, Generalized Boosted Regression Models have pretty bad performance in this MNIST Fashion dataset. I think it is the same reason as classification tree models--tree models are not very good at multiclassification problems and tend to ignore the relationship between variables.
+
+### Model 7: Neural Networks
+
+Neural network model is trying to build neurals which simulate human brain to contain and compute data information.
+
+I chose Neural Network model because it is almost the most famous model in machine learning technique.
+
+The advantages of Neural Networks is it seems to performance very well in most cases.
+
+The disadvantages is it contains a lot of parameters hidden inside so need a large dataset to train the model. And it is hard to visualize so people always use it as a black box.
+
+```{r code_model7}
+library(nnet)
+set.seed(0)
+time7.1=Sys.time()
+model7.1.1=nnet(as.factor(label)~.,data= train.subset1.1,size=10,decay=0.001,bag=T,maxit=150)
+model7.1.2=nnet(as.factor(label)~.,data= train.subset1.2,size=10,decay=0.001,bag=T,maxit=150)
+model7.1.3=nnet(as.factor(label)~.,data= train.subset1.3,size=10,decay=0.001,bag=T,maxit=150)
+time7.1=Sys.time()-time7.1
+time7.2=Sys.time()
+model7.2.1=nnet(as.factor(label)~.,data= train.subset2.1,size=10,decay=0.001,bag=T,maxit=150)
+model7.2.2=nnet(as.factor(label)~.,data= train.subset2.2,size=10,decay=0.001,bag=T,maxit=150)
+model7.2.3=nnet(as.factor(label)~.,data= train.subset2.3,size=10,decay=0.001,bag=T,maxit=150)
+time7.2=Sys.time()-time7.2
+time7.3=Sys.time()
+model7.3.1=nnet(as.factor(label)~.,data= train.subset3.1,size=10,decay=0.001,bag=T,maxit=150)
+model7.3.2=nnet(as.factor(label)~.,data= train.subset3.2,size=10,decay=0.001,bag=T,maxit=150)
+model7.3.3=nnet(as.factor(label)~.,data= train.subset3.3,size=10,decay=0.001,bag=T,maxit=150)
+time7.3=Sys.time()-time7.3
+#--------------------------------------------------------------------------------------------------
+##### Get prediction#####
+pred7.1.1=predict(model7.1.1,newdata= test,type='class')
+pred7.1.2=predict(model7.1.2,newdata= test,type='class')
+pred7.1.3=predict(model7.1.3,newdata= test,type='class')
+pred7.2.1=predict(model7.2.1,newdata= test,type='class')
+pred7.2.2=predict(model7.2.2,newdata= test,type='class')
+pred7.2.3=predict(model7.2.3,newdata= test,type='class')
+pred7.3.1=predict(model7.3.1,newdata= test,type='class')
+pred7.3.2=predict(model7.3.2,newdata= test,type='class')
+pred7.3.3=predict(model7.3.3,newdata= test,type='class')
+B7.1=round((mean(pred7.1.1==test$label)+mean(pred7.1.2==test$label)+mean(pred7.1.3==test$label))/3,4)
+B7.2=round((mean(pred7.2.1==test$label)+mean(pred7.2.2==test$label)+mean(pred7.2.3==test$label))/3,4)
+B7.3=round((mean(pred7.3.1==test$label)+mean(pred7.3.2==test$label)+mean(pred7.3.3==test$label))/3,4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row7.1=c("Neural_Networks",nrow(train)*A1,A1,B7.1,0.5*A1+(1-B7.1),round(time7.1,4))
+row7.2=c("Neural_Networks",nrow(train)*A2,A2,B7.2,0.5*A2+(1-B7.2),round(time7.2,4))
+row7.3=c("Neural_Networks",nrow(train)*A3,A3,B7.3,0.5*A3+(1-B7.3),round(time7.3,4))
+row7=numeric()
+row7=rbind(row7.1,row7.2,row7.3)
+colnames(row7)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row7)
+```
+
+I tune the parameters and found that when size=10,decay=0.001,bag=T the model have best performance. I set the maxit=150 because it didn't improve a lot after iter 100 and I don't want it spend very long time to compute
+
+However,from the datatable, we could know that,Simple Neural Networks Models didn't perform very well in this MNIST Fashion dataset.Don't know why the accuracy is low like this, maybe just because the nnet model not suit this dataset.
+
+
+### Model 8: Sequential model, a linear stack of layers.(keras)
+
+Reference: https://keras.rstudio.com/
+
+Since simple neural network didn't work well. I was thinking of trying more complicate neural network models. So I install the keras package and several other packages to support the keras environment. And ran a sequential model.You can see how the model looklike when I using **summary(model8)**.
+
+The advantages and disadvantages just same as neural network.
+
+```{r code_model8}
+################### Environment settings #########################
+# install.packages("Rcpp")
+# install.packages("reticulate")
+# install.packages("tensorflow")
+# devtools::install_github("rstudio/keras")
+# Seems like need to install.packages("keras") and install_keras() every time launch the project.
+# install.packages("keras")
+# library(keras)
+# install_keras()
+library(keras)
+#--------------------------------------------------------------------------------------------------
+##### Setting constants#####
+# Data is 7 pixels big in width and height
+img_rows <- img_cols <- 7
+batch_size <- 128
+num_classes <- 10
+input_shape <- c(img_rows, img_cols, 1)
+#--------------------------------------------------------------------------------------------------
+##### Data preparation#####
+x_train1.1 <- as.matrix(train.subset1.1[,-1])
+y_train1.1 <- as.numeric(as.factor(train.subset1.1$label))-1
+x_train1.2 <- as.matrix(train.subset1.2[,-1])
+y_train1.2 <- as.numeric(as.factor(train.subset1.2$label))-1
+x_train1.3 <- as.matrix(train.subset1.3[,-1])
+y_train1.3 <- as.numeric(as.factor(train.subset1.3$label))-1
+x_train2.1 <- as.matrix(train.subset2.1[,-1])
+y_train2.1 <- as.numeric(as.factor(train.subset2.1$label))-1
+x_train2.2 <- as.matrix(train.subset2.2[,-1])
+y_train2.2 <- as.numeric(as.factor(train.subset2.2$label))-1
+x_train2.3 <- as.matrix(train.subset2.3[,-1])
+y_train2.3 <- as.numeric(as.factor(train.subset2.3$label))-1
+x_train3.1 <- as.matrix(train.subset3.1[,-1])
+y_train3.1 <- as.numeric(as.factor(train.subset3.1$label))-1
+x_train3.2 <- as.matrix(train.subset3.2[,-1])
+y_train3.2 <- as.numeric(as.factor(train.subset3.2$label))-1
+x_train3.3 <- as.matrix(train.subset3.3[,-1])
+y_train3.3 <- as.numeric(as.factor(train.subset3.3$label))-1
+x_test <- as.matrix(test[,-1])
+y_test <- as.numeric(as.factor(test$label))-1
+# rescale
+x_train1.1=x_train1.1/mean(x_train1.1)
+x_train2.1=x_train2.1/mean(x_train2.1)
+x_train3.1=x_train3.1/mean(x_train3.1)
+x_train1.2=x_train1.2/mean(x_train1.2)
+x_train2.2=x_train2.2/mean(x_train2.2)
+x_train3.2=x_train3.2/mean(x_train3.2)
+x_train1.3=x_train1.3/mean(x_train1.3)
+x_train2.3=x_train2.3/mean(x_train2.3)
+x_train3.3=x_train3.3/mean(x_train3.3)
+x_test=x_test/mean(x_test)
+ #dummy the dependent variables
+y_train1.1 <- to_categorical(y_train1.1,10)
+y_train2.1 <- to_categorical(y_train2.1,10)
+y_train3.1 <- to_categorical(y_train3.1,10)
+y_train1.2 <- to_categorical(y_train1.2,10)
+y_train2.2 <- to_categorical(y_train2.2,10)
+y_train3.2 <- to_categorical(y_train3.2,10)
+y_train1.3 <- to_categorical(y_train1.3,10)
+y_train2.3 <- to_categorical(y_train2.3,10)
+y_train3.3 <- to_categorical(y_train3.3,10)
+y_test <- to_categorical(y_test,10)
+#--------------------------------------------------------------------------------------------------
+##### Defining model#####
+model8 <- keras_model_sequential() 
+model8 %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(49)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+summary(model8)
+# Next, compile the model with appropriate loss function, optimizer, and metrics:
+model8 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy'))
+#--------------------------------------------------------------------------------------------------
+##### Fit the models in different size of training set#####
+set.seed(100)
+model8.1.1=model8
+model8.2.1=model8
+model8.3.1=model8
+model8.1.2=model8
+model8.2.2=model8
+model8.3.2=model8
+model8.1.3=model8
+model8.2.3=model8
+model8.3.3=model8
+##### train.subset1 ##### 
+time8.1=Sys.time()
+history1.1 <- model8.1.1 %>% fit(
+  x_train1.1, y_train1.1, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.1.1 <- model8.1.1 %>% evaluate(x_test, y_test, verbose = 0)
+history1.2 <- model8.1.2 %>% fit(
+  x_train1.2, y_train1.2, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.1.2 <- model8.1.2 %>% evaluate(x_test, y_test, verbose = 0)
+history1.3 <- model8.1.3 %>% fit(
+  x_train1.3, y_train1.3, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.1.3 <- model8.1.3 %>% evaluate(x_test, y_test, verbose = 0)
+time8.1=Sys.time()-time8.1
+# The history object returned by fit() includes loss and accuracy metrics which we can plot:
+B8.1=round(mean(scores8.1.1$acc,scores8.1.2$acc,scores8.1.3$acc),4)
+plot(history1.3)
+##### train.subset2 ##### 
+time8.2=Sys.time()
+history2.1 <- model8.2.1 %>% fit(
+  x_train2.1, y_train2.1, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.2.1 <- model8.2.1 %>% evaluate(x_test, y_test, verbose = 0)
+history2.2 <- model8.2.2 %>% fit(
+  x_train2.2, y_train2.2, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.2.2 <- model8.2.2 %>% evaluate(x_test, y_test, verbose = 0)
+history2.3 <- model8.2.3 %>% fit(
+  x_train2.3, y_train2.3, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.2.3 <- model8.2.3 %>% evaluate(x_test, y_test, verbose = 0)
+time8.2=Sys.time()-time8.2
+# The history object returned by fit() includes loss and accuracy metrics which we can plot:
+B8.2=round(mean(scores8.2.1$acc,scores8.2.2$acc,scores8.2.3$acc),4)
+plot(history2.3)
+##### train.subset3 ##### 
+time8.3=Sys.time()
+history3.1 <- model8.3.1 %>% fit(
+  x_train3.1, y_train3.1, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.3.1 <- model8.3.1 %>% evaluate(x_test, y_test, verbose = 0)
+history3.2 <- model8.3.2 %>% fit(
+  x_train3.2, y_train3.2, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.3.2 <- model8.3.2 %>% evaluate(x_test, y_test, verbose = 0)
+history3.3 <- model8.3.3 %>% fit(
+  x_train3.3, y_train3.3, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2)
+scores8.3.3 <- model8.3.3 %>% evaluate(x_test, y_test, verbose = 0)
+time8.3=Sys.time()-time8.3
+# The history object returned by fit() includes loss and accuracy metrics which we can plot:
+B8.3=round(mean(scores8.3.1$acc,scores8.3.2$acc,scores8.3.3$acc),4)
+plot(history3.3)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row8=numeric()
+row8.1=c("Sequential model(keras)",nrow(train)*A1,A1,B8.1,0.5*A1+(1-B8.1),round(time8.1,4))
+row8.2=c("Sequential model(keras)",nrow(train)*A2,A2,B8.2,0.5*A2+(1-B8.2),round(time8.2,4))
+row8.3=c("Sequential model(keras)",nrow(train)*A3,A3,B8.3,0.5*A3+(1-B8.3),round(time8.3,4))
+row8=rbind(row8.1,row8.2,row8.3)
+colnames(row8)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row8)
+```
+
+From the datatable, we could know that the sequential model from keras works. It have better accuracy rate even than random forest, which is the best model I got before.
+
+### Model 9: Convolutional Neural Network
+
+Reference: 
+
+https://www.r-bloggers.com/transfer-learning-with-keras-in-r/
+https://gist.github.com/dokato/823eb947989d5203205788d50f769766
+https://keras.rstudio.com/articles/examples/mnist_cnn.html 
+
+Keras is a very powerful package and support a lot of neural network technique. Since it is a image recognition problem. I was considering using Convolutional Neural Network model, which is very famous in computer vision. You can see how the model looklike when I using **summary(model9)**.
+
+However, since the data had been condensed into 7x7 size(while most image model require bigger than 48x48 and 3 channels), I have to adjust a lot of parameters in convoluted layers. 
+
+So the disadvantage might be the CNN need really large data and high compute power to train the model.
+
+```{r code_model9}
+################### Environment settings #########################
+# install.packages("Rcpp")
+# install.packages("reticulate")
+# install.packages("tensorflow")
+# devtools::install_github("rstudio/keras")
+# install.packages("keras")
+library(keras)
+#--------------------------------------------------------------------------------------------------
+##### Setting constants#####
+###Same as in model9
+epochs <- 10
+##### Data preparation#####
+# Unflattening the data.
+dim(x_train1.1) <- c(nrow(x_train1.1), img_rows, img_cols, 1)
+dim(x_train2.1) <- c(nrow(x_train2.1), img_rows, img_cols, 1)
+dim(x_train3.1) <- c(nrow(x_train3.1), img_rows, img_cols, 1)
+dim(x_train1.2) <- c(nrow(x_train1.2), img_rows, img_cols, 1)
+dim(x_train2.2) <- c(nrow(x_train2.2), img_rows, img_cols, 1)
+dim(x_train3.2) <- c(nrow(x_train3.2), img_rows, img_cols, 1)
+dim(x_train1.3) <- c(nrow(x_train1.3), img_rows, img_cols, 1)
+dim(x_train2.3) <- c(nrow(x_train2.3), img_rows, img_cols, 1)
+dim(x_train3.3) <- c(nrow(x_train3.3), img_rows, img_cols, 1)
+dim(x_test) <- c(nrow(x_test), img_rows, img_cols, 1)
+#--------------------------------------------------------------------------------------------------
+##### Defining model#####
+model9 <- keras_model_sequential()
+model9 %>%
+  layer_conv_2d(filters = 32, kernel_size = c(1,1), activation = 'relu',
+                input_shape = input_shape) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(1,1), activation = 'relu') %>%
+  layer_max_pooling_2d(pool_size = c(1, 1)) %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = num_classes, activation = 'softmax')
+
+# compile model
+model9 %>% compile(
+  loss = loss_categorical_crossentropy,
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+summary(model9)
+#--------------------------------------------------------------------------------------------------
+##### Fit the models in different size of training set#####
+set.seed(100)
+model9.1.1=model9
+model9.2.1=model9
+model9.3.1=model9
+model9.1.2=model9
+model9.2.2=model9
+model9.3.2=model9
+model9.1.3=model9
+model9.2.3=model9
+model9.3.3=model9
+##### train.subset1 ##### 
+time9.1=Sys.time()
+history9.1.1=model9.1.1 %>% fit(
+  x_train1.1, y_train1.1,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.1.1 <- model9.1.1 %>% evaluate(x_test, y_test, verbose = 0)
+history9.1.2=model9.1.2 %>% fit(
+  x_train1.2, y_train1.2,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.1.2 <- model9.1.2 %>% evaluate(x_test, y_test, verbose = 0)
+history9.1.3=model9.1.3 %>% fit(
+  x_train1.3, y_train1.3,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+time9.1=Sys.time()-time9.1
+scores9.1.3 <- model9.1.3 %>% evaluate(x_test, y_test, verbose = 0)
+plot(history9.1.3)
+B9.1=round(mean(scores9.1.1$acc,scores9.1.2$acc,scores9.1.3$acc),4)
+##### train.subset2 ##### 
+time9.2=Sys.time()
+history9.2.1=model9.2.1 %>% fit(
+  x_train2.1, y_train2.1,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.2.1 <- model9.2.1 %>% evaluate(x_test, y_test, verbose = 0)
+history9.2.2=model9.2.2 %>% fit(
+  x_train2.2, y_train2.2,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.2.2 <- model9.2.2 %>% evaluate(x_test, y_test, verbose = 0)
+history9.2.3=model9.2.3 %>% fit(
+  x_train2.3, y_train2.3,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+time9.2=Sys.time()-time9.2
+scores9.2.3 <- model9.2.3 %>% evaluate(x_test, y_test, verbose = 0)
+plot(history9.2.3)
+B9.2=round(mean(scores9.2.1$acc,scores9.2.2$acc,scores9.2.3$acc),4)
+##### train.subset3 #####
+time9.3=Sys.time()
+history9.3.1=model9.3.1 %>% fit(
+  x_train3.1, y_train3.1,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.3.1 <- model9.3.1 %>% evaluate(x_test, y_test, verbose = 0)
+history9.3.2=model9.3.2 %>% fit(
+  x_train3.2, y_train3.2,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+scores9.3.2 <- model9.3.2 %>% evaluate(x_test, y_test, verbose = 0)
+history9.3.3=model9.3.3 %>% fit(
+  x_train3.3, y_train3.3,
+  batch_size = batch_size,
+  epochs = epochs,
+  verbose = 1,
+  validation_data = list(x_test, y_test))
+time9.3=Sys.time()-time9.3
+scores9.3.3 <- model9.3.3 %>% evaluate(x_test, y_test, verbose = 0)
+plot(history9.3.3)
+B9.3=round(mean(scores9.3.1$acc,scores9.3.2$acc,scores9.3.3$acc),4)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row9=numeric()
+row9.1=c("Convolutional Neural Network",nrow(train)*A1,A1,B9.1,0.5*A1+(1-B9.1),round(time9.1,4))
+row9.2=c("Convolutional Neural Network",nrow(train)*A2,A2,B9.2,0.5*A2+(1-B9.2),round(time9.2,4))
+row9.3=c("Convolutional Neural Network",nrow(train)*A3,A3,B9.3,0.5*A3+(1-B9.3),round(time9.3,4))
+row9=rbind(row9.1,row9.2,row9.3)
+colnames(row9)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row9)
+```
+
+However,CNN model didn't reach a high accuracy rate as I expect(above 90%), since the author of the reference said he get 0.9057 accuracy when using the almost same model on the original dataset. I think the reason is the original data set had been condensed so that it lost some of its features as images.
+
+### Model 10:Ensemble model:('svm', 'knn','rf','CNN','Sequential model').
+
+In this part, I tried to use **caretEnsemble** package. But it take very long time to do the cv(ensemble 2 models need almost 2 hours to compute) and when using **caretStack** function to stack models, found out that **caretEnsemble** doesn't support multiclass as of now =(.
+
+Thus I just ensemble models manually and simpley by averaging them.
+
+```{r code_model10}
+#--------------------------------------------------------------------------------------------------
+##### Models#####
+# knn
+pred10.1.1=as.numeric(as.factor(model1.1.1))-1
+pred10.1.2=as.numeric(as.factor(model1.2.1))-1
+pred10.1.3=as.numeric(as.factor(model1.3.1))-1
+pred10.1.1 <- to_categorical(pred10.1.1,10)
+pred10.1.2 <- to_categorical(pred10.1.2,10)
+pred10.1.3 <- to_categorical(pred10.1.3,10)
+#random forest 
+pred10.4.1=predict(model4.1.1,newdata= test,type='prob')
+pred10.4.2=predict(model4.2.1,newdata= test,type='prob')
+pred10.4.3=predict(model4.3.1,newdata= test,type='prob')
+# Support_Vector_Machines
+pred10.5.1=as.numeric(as.factor(pred5.1.1))-1
+pred10.5.2=as.numeric(as.factor(pred5.2.1))-1
+pred10.5.3=as.numeric(as.factor(pred5.3.1))-1
+pred10.5.1 <- to_categorical(pred10.5.1,10)
+pred10.5.2 <- to_categorical(pred10.5.2,10)
+pred10.5.3 <- to_categorical(pred10.5.3,10)
+#Sequential model
+x_test <- as.matrix(test[,-1])
+x_test=x_test/mean(x_test)
+pred10.8.1=model8.1.1 %>% predict_proba(x_test)
+pred10.8.2=model8.2.1 %>% predict_proba(x_test)
+pred10.8.3=model8.3.1 %>% predict_proba(x_test)
+#CNN
+dim(x_test) <- c(nrow(x_test), img_rows, img_cols, 1)
+pred10.9.1=model9.1.1 %>% predict_proba(x_test)
+pred10.9.2=model9.2.1 %>% predict_proba(x_test)
+pred10.9.3=model9.3.1 %>% predict_proba(x_test)
+#--------------------------------------------------------------------------------------------------
+##### Ensemble& Get prediction#####
+pred10.1=(pred10.1.1*0.2+pred10.4.1+pred10.8.1+0.2*pred10.5.1)/4
+pred10.2=(pred10.1.2*0.2+pred10.4.2+pred10.8.2+0.2*pred10.5.2)/4
+pred10.3=(pred10.1.3*0.2+pred10.4.3+pred10.8.3+0.2*pred10.5.3)/4
+pred10.1=Convert.Protolabel(pred10.1)
+pred10.2=Convert.Protolabel(pred10.2)
+pred10.3=Convert.Protolabel(pred10.3)
+B10.1=mean(pred10.1==test$label)
+B10.2=mean(pred10.2==test$label)
+B10.3=mean(pred10.3==test$label)
+#--------------------------------------------------------------------------------------------------
+##### Get datatable#####
+row10=numeric()
+row10.1=c("Ensemble_model",nrow(train)*A1,A1,B10.1,0.5*A1+(1-B10.1),0)
+row10.2=c("Ensemble_model",nrow(train)*A2,A2,B10.2,0.5*A2+(1-B10.2),0)
+row10.3=c("Ensemble_model",nrow(train)*A3,A3,B10.3,0.5*A3+(1-B10.3),0)
+row10=rbind(row10.1,row10.2,row10.3)
+colnames(row10)=c("Model",'Sample Size','A: Sample Size Proportion','B: Accuracy','Points','Time')
+datatable(row10)
+```
+
+From the datatable result, I found that I got the best result by ensemble those good performance models together.Ensemble model do have lower variance error and better accuracy in this case. However,I don't want to fit too many models and ensemble them together, cause those computationally expensive models are impractical in industry settings.
+
+## Scoreboard
+
+```{r scoreboard}
+row=numeric()
+row=rbind(row1,row2,row3,row4,row5,row6,row7,row8,row9,row10)
+colnames(row)=c("Model",'Sample Size','A_Sample.Size.Proportion','B_Accuracy','Points','Time')
+row=data.table(row)
+setorder(row,Points)
+datatable(row[,-6])
+```
+
+## Discussion
+
+By viewing the Scoreboard, I find that **Convolutional Neural Network**,**Sequential model(keras)**,**Random_Forest** and **Support_Vector_Machines** have higher accuracy and lower points.The best accuracy I get when predicting testing set is **`r max(row$B_Accuracy)`** with **`r row[B_Accuracy==max(row$B_Accuracy),]$Model`** model, while the lowest point I get is **`r min(row$Points)`** when using **`r row[Points==min(row$Points),]$Model`** model and **`r row[Points==min(row$Points),]$A_Sample.Size.Proportion`** of training set to train it.
+
+From this final project, I got more familiar with different models like Random_Forest, Support_Vector_Machines and so on. Furthermore, I start using the Keras package and found it is really powerful for machine learning techniques. To moveing forward, I'd like to use VGG16 or VGG19 to do the transfer learning on original dataset or other interesting computer vision dataset.
