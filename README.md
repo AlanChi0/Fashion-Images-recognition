@@ -14,7 +14,7 @@
 
 
 ### I knit a html report which is easier to read. Please Download and open it by browser
-![avatar](https://drive.google.com/open?id=1s4JnyitlBHhT_efXQcpgj-SptvMv4I2y)
+![](Report.png)
 
 You can download the report only through this link:
 https://drive.google.com/open?id=1oKuVWkQgtDhvpquD_0dBZlQMi4iNTuKO
