@@ -13,7 +13,7 @@
 * Generalized Boosted Regression Models
 
 
-### I knit a html report which is easier to read. Please Download and open it by browser
+### I knit a html report which is easier to read. Please download and open it on browser
 ![](Report.png)
 
 You can download the report only through this link:
