@@ -1,0 +1,737 @@
+---
+title: "APANPS5335 Final Project, Summer 2018"
+author: "Quanlei(Alan) Chi qc246"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+  theme: cayman
+highlight: github
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55))
+```
+
+```{r libraries}
+#Libraries
+library(DT)
+library(data.table)
+library(caretEnsemble)
+library(caret)
+library(rpart)
+library(randomForest)
+library(keras)
+library(e1071)
+```
+
+```{r source_files}
+
+```
+
+```{r,functions ,tidy=TRUE}
+# Functions
+#--------------------------------------------------------------------------------------------------
+##Convert the prediction from probability to label 
+Convert.Protolabel=function(pred){
+  pred=data.frame(pred)
+  label=c("Ankle boot","Bag","Coat","Dress","Pullover","Sandal","Shirt","Sneaker","T-shirt/top",
+          "Trouser")
+  pred.new=list()
+  for(i in 1:nrow(pred)){
+    pred.new=append(pred.new,label[which.max(pred[i,])])
+  }
+  return(unlist(data.table(pred.new)))
+}
+#--------------------------------------------------------------------------------------------------
+##calculate the score 
+the.score <- function(A, B){
+	return(round(0.5 * A + (1 - B),4))
+} 
+#--------------------------------------------------------------------------------------------------
+## Select right columns instead of using formulae like label ~. 
+create.formula <- function(dat, outcome.name, variable.prefix = "pixel"){
+  the.indices <- grep(pattern = variable.prefix, x = names(dat))
+  the.rhs <- paste(names(dat)[the.indices], collapse = " + ")
+  the.formula <- sprintf("%s ~ %s", outcome.name, the.rhs)
+  return(as.formula(the.formula))
+}
+```
+
+```{r constants}
+#Constants
+A1=0.02
+A2=0.05
+A3=0.1
+```
+
+```{r load_data}
+
+```
+
+```{r clean_data}
+
+```
+
+## Introduction
+
+The project will focus on an image recognition problem.  In this report, I will construct a variety of machine learning models to generate predictive classifications. Those machine learning models including:
+
++ **Ensemble model:('svm', 'knn','rf','cnn','sequential')**
++ **Convolutional Neural Network**
++ **Simple Sequential model(keras)**
++ **Neural Networks**
++ **K-Nearest Neighbors**
++ **Multinomial logistic regression**
++ **Classification Tree**
++ **Random Forest**
++ **Support Vector Machines**
++ **Generalized Boosted Regression Models**
+
+## The Data
+
+Fashion-MNIST(https://github.com/zalandoresearch/fashion-mnist) is a dataset of Zalando's article images—consisting of a training set of 60,000 images and a test set of 10,000 images.Each image is divided into small squares called **pixels** of equal area.  Within each pixel, a grayscale brightness measurement was recorded.  The brightness values range from 0 (white) to 255 (black).
+
+Fashion-MNIST is intended to serve as a direct drop-in replacement for the original MNIST dataset for benchmarking machine learning algorithms, as it shares the same image size, data format and the structure of training and testing splits. Fashion-MNIST outbeat MNIST, which most beginners used because: "MNIST is too easy, overused and can not represent modern CV tasks."
+
+The original data set divided each image into 784 (28 by 28) pixels.  To facilitate easier computation, the data has been condensed into 49 pixels (7 by 7) per image.  The first 7 pixels represent the top row, the next 7 pixels form the second row, etc.
+
+## The Score
+
+What are the best machine learning models for classifying the labels of the testing set based upon the data of the training set?  How small of a sample size do you need to generate the "best" predictions?  To balance these competing goals, we will introduce an overall scoring function:
+
+**Points = 0.5 * A + (1 - B)**
+
+where
+
+**A** is the proportion of the training rows that is utilized in the model. 
+
+**B** is the testing accuracy.
+
+I will create and evaluate different machine learning models on different sample sizes. Different combinations of models and sample sizes can be compared based on their Points.  The overall goal is to build a classification method that **minimizes the value** of **Points**.
+
+### Data preparation
+
+The first step of machine learning is always about the data cleansing. In the following code,I split the training set into 3 different size subsets, which contain **`r A1*100`%**,**`r A3*100`%** and **`r A3*100`%** data of training set.
+
+I select the `r A1*100`%,`r A3*100`% and `r A3*100`% as three subsets because there are a lot models to fits. Thus, small subsets could save computing time. Furthermore,I select small subset when considering about the **Points = 0.5 * A + (1 - B)** formula. Since the B-accuracy is hard to increase after 80%, it is wise to select a relatively small A-sample size which get near 80% accuracy. Thus,we could get best combination of A and B which lead to the lowest Points.
+
+```{r Data_preparation}
+set.seed(0)
+train = fread(input = "MNIST-fashion training set-49.csv", verbose = FALSE)
+train$label=as.factor(train$label)
+test=fread(input = "MNIST-fashion testing set-49.csv", verbose = FALSE)
+test$label=as.factor(test$label)
+# summary(train)
+# summary(test)
+# Get formula
+formula=create.formula(train,'label')
+print(formula)
+table(train$label)
+table(test$label)
+```
+Prior to implementing the models, I performed a variety of investigations, such as summarization and visualization, into the nature and quality of the data. 
+
+From the summary of training and testing set. We could know that there is no missing data. So no need for NA imputation in this project.
+
+From the labels' table we could know that there are 10 different labels in training and testing set and all labels have same number of rows. Also, I used **as.factor()** convert the dependent variable into factors.
+
+### Model 1: K-Nearest Neighbors
+
+**How KNN works?**
+
+In the classification setting, the K-nearest neighbor algorithm essentially boils down to forming a majority vote between the K most similar points. And the similarity is defined according to a distance metric between two data points.
+
+**Why KNN**
+
+KNN is a pretty famous technique to do classification, so I select it to see how it performed. 
+
+**Pros and Cons about KNN**
+
+The advantages of KNN are that it simple to understand and easy to implement. With zero to little training time, it can be a useful tool for off-the-bat analysis of some data set you are planning to run more complex algorithms on. Furthermore, KNN works just as easily with multiclass data sets whereas other algorithms are hardcoded for the binary setting. 
+
+The disadvantages of KNN are: First,the KNN algorithm is the computationally expensive testing phase which is impractical in industry settings. Note the rigid dichotomy between KNN and the more sophisticated Neural Network which has a lengthy training phase albeit a very fast testing phase. Furthermore, KNN can suffer from skewed class distributions. For example, if a certain class is very frequent in the training set, it will tend to dominate the majority voting of the new example. Finally, the accuracy of KNN can be severely degraded with high-dimension data because there is little difference between the nearest and farthest neighbor.
+
+```{r ,code_model1, message= FALSE, tidy=TRUE}
+library(class)
+#--------------------------------------------------------------------------------------------------
+##### Select the best K#####
+df.knn=numeric()
+B.knn=numeric()
+train.subset=train[sample(nrow(train),size=nrow(train)*A1),]
+for(i in 1:20){
+  model.knn=knn(train=train.subset[,-'label'],test=test[,-'label'],cl=train.subset$label,k=i)
+  B.knn=mean(model.knn==test$label)
+  df.knn=rbind(df.knn,c(i,B.knn))
+}
+plot(df.knn,xlab = 'K',ylab = 'Accuracy',main = 'Select_best_K')
+K=which.max(df.knn[,2])
+#--------------------------------------------------------------------------------------------------
+my.knn <- function(training.data, testing.data, A, k){
+  require(class)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <- knn(train=train.subset[,-'label'],test=test[,-'label'],cl=train.subset$label,k=k)
+    tic <- Sys.time()
+    B <-rbind(B,mean(the.model == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "K-Nearest Neighbors", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row1=data.table()
+for(i in c(A1,A2,A3)){
+  row1=rbind(row1,my.knn(train,test,i,K))
+}
+datatable(row1)
+```
+From the graph of "Select_best_K" we could know that K= `r which.max(df.knn[,2])` is the best choice of K.
+
+From the datatable,we could know that knn performed pretty well in this data set and just spend few seconds to compute.
+
+### Model 2:  Multinomial logistic regression
+
+**How Multinomial logistic regression works?**
+
+In statistics, multinomial logistic regression is a classification method that generalizes logistic regression to multiclass problems.
+
+**Why select Multinomial logistic regression?**
+
+Multinom is a very basic technique, so I select it to see how it performed. 
+
+**Pros and Cons about Multinomial logistic regression.**
+
+The advantages of Multinom are that it simple to understand and easy to implement. It based on linear assumption so people could the **Coefficients** that how each variables affect the dependent variable. 
+
+The disadvantages is the multinomial logit relies on the assumption of independence of irrelevant alternatives (IIA), which is not always desirable. This assumption states that the odds of preferring one class over another do not depend on the presence or absence of other "irrelevant" alternatives. For example, the relative probabilities of taking a car or bus to work do not change if a bicycle is added as an additional possibility. Meanwhile,the model is too simple to get high accuracy.
+
+```{r, code_model2 ,warnings=FALSE, message=FALSE, results='hide'}
+my.multinom <- function(training.data, testing.data, A){
+  require(nnet)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <-multinom(formula,data= train.subset)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Multinomial logistic regression", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row2=data.table()
+for(i in c(A1,A2,A3)){
+  row2=rbind(row2,my.multinom(train,test,i))
+}
+```
+`r datatable(row2)`
+As expect, for the datatable we could know that Multinomial logistic regression didn't get very good performance in this data set, because the pixels of a image effect each other while logistic regression cannot understand those between-variable-connections pretty well.
+
+### Model 3:  Classification Tree
+
+**How Classification Tree works?**
+
+Decision tree builds classification or regression models in the form of a tree structure. It breaks down a dataset into smaller and smaller subsets by making each of its subsets have lowest entropy.
+
+**Why select Classification Tree?**
+
+Classification Tree is a very basic technique, so I select it to see how it performed. 
+
+**Pros and Cons about Classification Tree.**
+
+The advantages of Classification Tree are that it easy to interpret visually how the model works.Secondly, it can easily handle qualitative (categorical) features and works well with decision boundaries parellel to the feature axis
+
+The disadvantages is it is a greedy algorithm and prone to overfitting. Furthermore, the tree model is not very robust, which means by adding some more data, the whole model could completely changed. 
+
+```{r ,code_model3, message= FALSE, tidy=TRUE}
+my.rpart <- function(training.data, testing.data, A, cp, the.type='class'){
+  require(rpart)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <-rpart(formula,data= train.subset, cp= cp)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data, type= the.type)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Classification Tree", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row3=data.table()
+for(i in c(A1,A2,A3)){
+  row3=rbind(row3,my.rpart(train,test,i,cp=0))
+}
+datatable(row3)
+```
+I test the cp parameter several times and found when cp equal to 0, which means no prun the tree at all, the tree model get the best accuracy. I think it because the training data and testing data are very similar to each other so variance are low result in no need of pruning the tree.
+
+However, the tree model didn't have a very good performance in this data set.I think it because tree models are not very good at multiclassification compare to algorithm like neural network.
+
+### Model 4: Random Forest
+
+**How Random Forest works?**
+
+Random Forest randomly select rows and variables to build hundreds of trees and ensemble them together.
+
+**Why select Random Forest?**
+
+Random Forest is a very popular technique, and always have good performance. so I select it as one base line accuracy I should achieve. 
+
+**Pros and Cons about Random Forest.**
+
+The advantages of Random Forest are that it is a ensemble models already which have lower variance and pretty high accuracy in most cases.
+
+The disadvantages is it hard to visualized, and it works with some random method which couldn't be explained to the business world. 
+
+```{r ,code_model4 ,message= FALSE ,tidy=TRUE}
+my.randomForest <- function(training.data, testing.data, A, ntree = 200, the.type = 'class'){
+  require(randomForest)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <- randomForest(formula, data = train.subset, ntree = ntree)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data, type = the.type)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Random Forest", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row4=data.table()
+for(i in c(A1,A2,A3)){
+  row4=rbind(row4,my.randomForest(train,test,i))
+}
+datatable(row4)
+```
+I select ntree=200 because normally, more trees won't help a lot when it over 100.And Since more tree means more compute time, 200 is a wise number to get almost best performance of random forest model.
+
+From the datatable, we could know that random forest performance very well and I get the highest accuracy from now. I think it because random forest is a ensemble model itself, which lead to low variance and high accuracy.
+
+
+### Model 5: Support Vector Machines 
+
+**How Support Vector Machines works?**
+
+SVM works by mapping data to a high-dimensional feature space so that data points can be categorized, even when the data are not otherwise linearly separable. A separator between the categories is found, then the data are transformed in such a way that the separator could be drawn as a hyperplane. Following this, characteristics of new data can be used to predict the group to which a new record should belong.
+
+**Why select Support Vector Machines?**
+
+Support Vector Machines is one of the most popular techniques, and almost have the best performance before neural network came out. so I select it to see how it performed. 
+
+**Pros and Cons about Support Vector Machines.**
+
+The advantages of Support Vector Machines are: First, it is pretty robust model because the separator only affected by support vector. Second, it could sovle no linear distribution data because it maps data into higher dimensions. Finally, due to some mathematical tricks,the svm could calculate high dimensional data in low dimensions,which reduce a lot compute time.
+
+The disadvantages is it still take a long time to train the model.
+
+
+```{r ,code_model5 ,message= FALSE ,tidy=TRUE}
+my.svm <- function(training.data, testing.data, A, the.tolerance , the.type = 'class'){
+  require(e1071)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <- svm(formula,data= train.subset, tolerance = the.tolerance)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data, type = the.type)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Support Vector Machines", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row5=data.table()
+for(i in c(A1,A2,A3)){
+  row5=rbind(row5,my.svm(train,test,i,0.001))
+}
+datatable(row5)
+```
+I chose different tolerance and found out when the tolerance equal to 0.001 the model have best performance. I didn't tune the models by using cross validation due to long computation time.
+
+As expect, from the datatable we could know that the Support Vector Machines have second performance from now which only after random forest.
+
+
+### Model 6: Generalized Boosted Regression Models
+
+**How Generalized Boosted Regression Models works?**
+
+Generalized Boosted Regression Models is also one kind of ensemble models. It trys to build a big model first and build several smaller models the replace the week parts of the big model, which we called boosting.So the total model have lower loss and higher accuracy. 
+
+**Why select Generalized Boosted Regression Models?**
+
+GBM is also a well-known technique. so I select it to see how it performed. 
+
+**Pros and Cons about Generalized Boosted Regression Models.**
+
+The advantages of GBM is it is one kind of ensemble models so likely have pretty well performance in most cases.
+
+The disadvantages is it take a long time to train the model and is a greedy algorithm as well, which means it might end in local maximum easily.
+
++ Because the predict.gbm only have type='response', which means predict.gbm only return the probility of each labels rather than exact label names. I need to wirte my own function **Convert.Protolabel** to calculate the accuracy.
+```{r ,code_model6 ,message= FALSE ,tidy=TRUE}
+my.gbm <- function(training.data, testing.data, A, the.ntree= 200, the.type = 'response'){
+  require(gbm)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <- gbm(formula,data= train.subset,
+             distribution = "multinomial",n.trees = the.ntree, cv.folds=5)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data, type = the.type, n.trees= the.ntree)
+    the.prediction=Convert.Protolabel(the.prediction)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Support Vector Machines", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row6=data.table()
+for(i in c(A1,A2,A3)){
+  row6=rbind(row6,my.gbm(train,test,i))
+}
+datatable(row6)
+```
+Surprisingly, though I used 5 fold cross validation when training the model, Generalized Boosted Regression Models have pretty bad performance in this MNIST Fashion dataset. I think it is the same reason as classification tree models--tree models are not very good at multiclassification problems and tend to ignore the relationship between variables.
+
+### Model 7: Neural Networks
+
+**How Neural Networks works?**
+
+Neural network model is trying to build neurals which simulate human brain to contain and compute data information.
+
+**Why select Neural Networks?**
+
+I chose Neural Network model because it is almost the most famous model in machine learning technique.
+
+**Pros and Cons about Neural Networks.**
+
+The advantages of Neural Networks is it seems to performance very well in most cases.
+
+The disadvantages is it contains a lot of parameters hidden inside so need a large dataset to train the model. And it is hard to visualize so people always use it as a black box.
+
+```{r ,code_model7 ,message= FALSE ,tidy=TRUE,results='hide'}
+my.nnet <- function(training.data, testing.data, A, the.size= 10,the.decay= 0.001, the.bag=T, the.maxit=150, the.type = 'class'){
+  require(nnet)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    the.model <- nnet(formula,data= train.subset,
+                      size=the.size,decay=the.decay,bag=the.bag,maxit=the.maxit)
+    tic <- Sys.time()
+    the.prediction <- predict(the.model, newdata = testing.data, type = the.type)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Neural Networks", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row7=data.table()
+for(i in c(A1,A2,A3)){
+  row7=rbind(row7,my.nnet(train,test,i))
+}
+library(DT)
+```
+`r datatable(row7)`
+I tune the parameters and found that when size=10,decay=0.001,bag=T the model have best performance. I set the maxit=150 because nnet function didn't improve a lot after iter 100. Thus, maxit=150 is the wise point to 
+
+However,from the datatable, we could know that,Simple Neural Networks Models didn't perform very well in this MNIST Fashion dataset.Don't know why the accuracy is low like this, maybe just because the nnet model not suit this dataset.
+
+
+### Model 8: Sequential Neural Network model, a linear stack of layers.(keras)
+
+Reference: https://keras.rstudio.com/
+
+Since simple neural network didn't work well. I was thinking of trying more complicate neural network models. So I install the keras package and several other packages to support the keras environment. And ran a sequential model.You can see how the model looklike when I using **summary(model8)**.
+
+The advantages and disadvantages just same as neural network.
+
+```{r ,code_model8 ,message= FALSE ,tidy=TRUE}
+################### Environment settings #########################
+# install.packages("Rcpp")
+# install.packages("reticulate")
+# install.packages("tensorflow")
+# devtools::install_github("rstudio/keras")
+# Seems like need to install.packages("keras") and install_keras() every time launch the project.
+# install.packages("keras")
+# library(keras)
+# install_keras()
+library(keras)
+#--------------------------------------------------------------------------------------------------
+##### Setting constants#####
+# Data is 7 pixels big in width and height
+img_rows <- img_cols <- 7
+batch_size <- 128
+num_classes <- 10
+input_shape <- c(img_rows, img_cols, 1)
+Snn.epochs<-30
+#--------------------------------------------------------------------------------------------------
+##### Defining model#####
+model8 <- keras_model_sequential() 
+model8 %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(49)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+summary(model8)
+# Next, compile the model with appropriate loss function, optimizer, and metrics:
+model8 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy'))
+#--------------------------------------------------------------------------------------------------
+##### Fit the models in different size of training set#####
+my.Sequential.nn <- function(the.model,training.data, testing.data, A,
+                             the.epochs= Snn.epochs,
+                             the.batch_size= batch_size, the.bag=T, 
+                             the.maxit=150, the.type = 'class'){
+  require(keras)
+  require(data.table)
+  B=numeric()
+  ##### Data preparation#####
+  x_test <- as.matrix(test[,-'label'])
+  y_test <- as.numeric(as.factor(test$label))-1
+  # rescale
+  x_test=x_test/mean(x_test)
+  #dummy the dependent variables
+  y_test <- to_categorical(y_test,10)
+  #--------------------------------------------------------------------------------------------------
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    ##### Data preparation#####
+    x_train <- as.matrix(train.subset[,-'label'])
+    y_train <- as.numeric(as.factor(train.subset$label))-1
+    # rescale
+    x_train=x_train/mean(x_train)
+    #dummy the dependent variables
+    y_train <- to_categorical(y_train,10)
+    toc <- Sys.time()
+    
+    history=the.model %>% fit(x_train, y_train, 
+                           epochs = the.epochs, batch_size = the.batch_size, 
+                           validation_split = 0.2)
+    tic <- Sys.time()
+    the.scores <- the.model %>% evaluate(x_test, y_test, verbose = 0)
+    B <-rbind(B,the.scores$acc) 
+  }
+  plot(history)
+  B=mean(B)
+  the.row <- data.table(Model = "Sequential Neural Network model", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row8=data.table()
+for(i in c(A1,A2,A3)){
+  row8=rbind(row8,my.Sequential.nn(model8,train,test,i))
+}
+datatable(row8)
+```
+
+From the datatable, we could know that the sequential model from keras works. It have better accuracy rate even than random forest, which is the best model I got before.
+
+### Model 9: Convolutional Neural Network
+
+Reference: 
+
+https://www.r-bloggers.com/transfer-learning-with-keras-in-r/
+https://gist.github.com/dokato/823eb947989d5203205788d50f769766
+https://keras.rstudio.com/articles/examples/mnist_cnn.html 
+
+Keras is a very powerful package and support a lot of neural network technique. Since it is a image recognition problem. I was considering using Convolutional Neural Network model, which is very famous in computer vision. You can see how the model looklike when I using **summary(model9)**.
+
+However, since the data had been condensed into 7x7 size(while most image model require bigger than 48x48 and 3 channels), I have to adjust a lot of parameters in convoluted layers. 
+
+So the disadvantage might be the CNN need really large data and high compute power to train the model.
+
+```{r ,code_model9 ,message= FALSE ,tidy=TRUE}
+################### Environment settings #########################
+# install.packages("Rcpp")
+# install.packages("reticulate")
+# install.packages("tensorflow")
+# devtools::install_github("rstudio/keras")
+# install.packages("keras")
+library(keras)
+#--------------------------------------------------------------------------------------------------
+##### Setting constants#####
+###Same as in model9
+cnn.epochs <- 10
+##### Defining model#####
+model9 <- keras_model_sequential()
+model9 %>%
+  layer_conv_2d(filters = 32, kernel_size = c(1,1), activation = 'relu',
+                input_shape = input_shape) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(1,1), activation = 'relu') %>%
+  layer_max_pooling_2d(pool_size = c(1, 1)) %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = num_classes, activation = 'softmax')
+# compile model
+model9 %>% compile(
+  loss = loss_categorical_crossentropy,
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+summary(model9)
+#--------------------------------------------------------------------------------------------------
+##### Fit the models in different size of training set#####
+my.cnn <- function(the.model,training.data, testing.data, A,
+                             the.epochs= cnn.epochs,
+                             the.batch_size= batch_size, the.bag=T, 
+                             the.maxit=150, the.type = 'class'){
+  require(keras)
+  require(data.table)
+  B=numeric()
+  ##### Data preparation#####
+  x_test <- as.matrix(test[,-'label'])
+  y_test <- as.numeric(as.factor(test$label))-1
+  # rescale
+  x_test=x_test/mean(x_test)
+  #dummy the dependent variables
+  y_test <- to_categorical(y_test,10)
+  # Unflattening the data.
+  dim(x_test) <- c(nrow(x_test), img_rows, img_cols, 1)
+  #--------------------------------------------------------------------------------------------------
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    ##### Data preparation#####
+    x_train <- as.matrix(train.subset[,-'label'])
+    y_train <- as.numeric(as.factor(train.subset$label))-1
+    # rescale
+    x_train=x_train/mean(x_train)
+    # Unflattening the data.
+    dim(x_train) <- c(nrow(x_train), img_rows, img_cols, 1)
+    #dummy the dependent variables
+    y_train <- to_categorical(y_train,10)
+    toc <- Sys.time()
+    
+    history=the.model %>% fit(x_train, y_train, 
+                           epochs = the.epochs, batch_size = the.batch_size, verbose = 1,
+                           validation_data = list(x_test, y_test))
+    tic <- Sys.time()
+    the.scores <- the.model %>% evaluate(x_test, y_test, verbose = 0)
+    B <-rbind(B,the.scores$acc) 
+  }
+  plot(history)
+  B=mean(B)
+  the.row <- data.table(Model = "Convolutional Neural Network", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row9=data.table()
+for(i in c(A1,A2,A3)){
+  row9=rbind(row9,my.cnn(model9,train,test,i))
+}
+datatable(row9)
+```
+
+However,CNN model didn't reach a high accuracy rate as I expect(above 90%), since the author of the reference said he get 0.9057 accuracy when using the almost same model on the original dataset. I think the reason is the original data set had been condensed so that it lost some of its features as images.
+
+### Model 10:Ensemble model:('svm', 'knn','rf','Sequential model').
+
+In this part, I tried to use **caretEnsemble** package. But it take very long time to do the cv(ensemble 2 models need almost 2 hours to compute) and when using **caretStack** function to stack models, found out that **caretEnsemble** doesn't support multiclass as of now =(.
+
+Thus I just ensemble models manually and simpley by averaging them.
+
+```{r ,code_model10 ,message= FALSE ,tidy=TRUE}
+#--------------------------------------------------------------------------------------------------
+##### Models#####
+my.Ensemble <- function(training.data, testing.data, A, k){
+  require(class)
+  require(keras)
+  require(e1071)
+  require(randomForest)
+  require(data.table)
+  B=numeric()
+  # Run model three times to decrease the random sampling method affect the accuracy rate   
+  for(i in 1:3){
+    train.subset=train[sample(nrow(training.data),size=nrow(training.data)*A),]
+    toc <- Sys.time()
+    # knn
+    the.model.knn <- knn(train=train.subset[,-'label'],test=test[,-'label'],cl=train.subset$label,k=k)
+    pred10.1=as.numeric(as.factor(the.model.knn))-1
+    pred10.1 <- to_categorical(pred10.1,10)
+    #random forest 
+    the.model.rf <- randomForest(formula, data = train.subset, ntree = 200)
+    pred10.2 <- predict(the.model.rf, newdata = testing.data, type = 'prob')
+    # Support_Vector_Machines
+    the.model.svm <- svm(formula,data= train.subset, tolerance = 0.001)
+    pred10.3 <- predict(the.model.svm, newdata = testing.data, type = 'class')
+    pred10.3=as.numeric(as.factor(pred10.3))-1
+    pred10.3 <- to_categorical(pred10.3,10)
+    #Sequential model
+    x_test <- as.matrix(test[,-1])
+    x_test=x_test/mean(x_test)
+    ##### Data preparation#####
+    x_train <- as.matrix(train.subset[,-'label'])
+    y_train <- as.numeric(as.factor(train.subset$label))-1
+    # rescale
+    x_train=x_train/mean(x_train)
+    #dummy the dependent variables
+    y_train <- to_categorical(y_train,10)
+    ## Fit the model
+    model8 %>% fit(x_train, y_train, 
+                   epochs = 30, batch_size = 128, 
+                   validation_split = 0.2)
+    pred10.4=model8 %>% predict_proba(x_test)
+    tic <- Sys.time()
+    the.prediction=(pred10.1*0.2+pred10.2+pred10.3+0.2*pred10.4)/4
+    the.prediction=Convert.Protolabel(the.prediction)
+    B <-rbind(B,mean(the.prediction == test$label)) 
+  }
+  B=mean(B)
+  the.row <- data.table(Model = "Ensemble model", `Sample Size` = nrow(training.data) * A, `A: Sample Size Proportion` = A, `B: Accuracy` = round(B,4), Points = the.score(A = A, B = B), Time = round(tic-toc,4))
+  return(the.row)
+}
+row10=data.table()
+for(i in c(A1,A2,A3)){
+  row10=rbind(row10,my.Ensemble(train,test,i,K))
+}
+datatable(row10)
+```
+
+From the datatable result, I found that I got the best result by ensemble those good performance models together.Ensemble model do have lower variance error and better accuracy in this case. However,I don't want to fit too many models and ensemble them together, cause those computationally expensive models are impractical in industry settings.
+
+## Scoreboard
+
+```{r scoreboard}
+row=numeric()
+row=rbind(row1,row2,row3,row4,row5,row6,row7,row8,row9,row10)
+colnames(row)=c("Model",'Sample Size','A_Sample.Size.Proportion','B_Accuracy','Points','Time')
+row=data.table(row)
+setorder(row,Points)
+datatable(row[,-'Time'])
+```
+
+## Discussion
+
+By viewing the Scoreboard, I find that **Convolutional Neural Network**,**Sequential model(keras)**,**Random_Forest** and **Support_Vector_Machines** have higher accuracy and lower points.The best accuracy I get when predicting testing set is **`r max(row$B_Accuracy)`** with **`r row[B_Accuracy==max(row$B_Accuracy),]$Model`** , while the lowest point I get is **`r min(row$Points)`** when using **`r row[Points==min(row$Points),]$Model`**  and **`r row[Points==min(row$Points),]$A_Sample.Size.Proportion`** of training set to train it.
+
+From this final project, I got more familiar with different models like Random_Forest, Support_Vector_Machines and so on. Furthermore, I start using the Keras package and found it is really powerful for machine learning techniques. To moveing forward, I'd like to use VGG16 or VGG19 to do the transfer learning on original dataset or other interesting computer vision dataset.
